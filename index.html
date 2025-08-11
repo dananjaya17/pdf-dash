@@ -1,536 +1,300 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>POS PDF → Live Dashboard (v2 parser)</title>
-  <meta name="description" content="Upload a Crystal Reports-style POS PDF and see a live dashboard parsed on the same page." />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>POS PDF → Dashboard</title>
 
-  <!-- Tailwind for layout -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = { theme: { extend: { colors: { brand: { 50:'#eff6ff',100:'#dbeafe',200:'#bfdbfe',300:'#93c5fd',400:'#60a5fa',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',800:'#1e40af',900:'#1e3a8a' } } } } } };
-  </script>
+<!-- pdf.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.6.172/pdf.min.js"></script>
 
-  <!-- pdf.js (UMD build exposes global `pdfjsLib`) -->
-  <script id="pdfjs-script" src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js" crossorigin="anonymous"></script>
-
-  <!-- Chart.js for quick charts -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-
-  <style> html { scroll-behavior: smooth; } </style>
+<style>
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; }
+  h1 { margin: 0 0 12px; }
+  input[type="file"] { margin: 8px 0 16px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; font-size: 14px; }
+  th { background: #f5f5f5; text-align: left; }
+  .section { margin-top: 24px; display: none; }
+  .muted { color: #666; font-size: 13px; }
+</style>
 </head>
-<body class="bg-white text-slate-800 antialiased">
-  <header class="sticky top-0 z-50 bg-white/80 backdrop-blur border-b border-slate-200">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <div class="w-7 h-7 rounded-lg bg-brand-600"></div>
-        <h1 class="font-bold tracking-tight">POS PDF → Dashboard</h1>
-      </div>
-      <a href="#how" class="text-sm hover:text-brand-700">How it works</a>
-    </div>
-  </header>
+<body>
+<h1>POS PDF → Live Dashboard</h1>
+<input type="file" id="pdfFile" accept="application/pdf" />
+<div id="status" class="muted"></div>
 
-  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-    <!-- Upload Card -->
-    <section class="rounded-2xl border border-slate-200 p-6">
-      <h2 class="text-xl font-semibold">Upload your daily PDF</h2>
-      <p class="text-slate-600 mt-1">Works with Crystal Reports-style end-of-day PDFs like the sample you shared.</p>
-      <div class="mt-4 flex flex-col sm:flex-row items-start gap-4">
-        <input id="fileInput" type="file" accept="application/pdf" class="block w-full sm:w-auto file:mr-4 file:rounded-xl file:border-0 file:bg-brand-600 file:px-4 file:py-2 file:text-white hover:file:bg-brand-700 file:cursor-pointer" />
-        <button id="parseBtn" class="px-4 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50" disabled>Parse & Build Dashboard</button>
-        <div id="status" class="text-sm text-slate-500"></div>
-      </div>
-      <p id="libWarning" class="hidden mt-2 text-sm text-red-600">PDF engine failed to load. Check your internet connection or content security policy and reload.</p>
-      <p class="mt-2 text-xs text-slate-500">Tip: Press <kbd>Esc</kbd> to cancel a long read.</p>
-    </section>
+<div id="employeeSummary" class="section">
+  <h2>Employee Summary</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Drawer ID</th><th>Employee</th><th>Total</th>
+        <th>Cash</th><th>Visa</th><th>Master</th><th>AmEx</th><th>Short</th>
+      </tr>
+    </thead>
+    <tbody id="empRows"></tbody>
+  </table>
+</div>
 
-    <!-- Summary Cards -->
-    <section id="summary" class="mt-10 grid sm:grid-cols-2 lg:grid-cols-4 gap-4 hidden">
-      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Store</p><p id="store" class="text-xl font-bold">—</p></div>
-      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Report Window</p><p id="window" class="text-xl font-bold">—</p></div>
-      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Income Subtotal</p><p id="incomeSubtotal" class="text-xl font-bold">—</p></div>
-      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Grand Total</p><p id="grandTotal" class="text-xl font-bold">—</p></div>
-    </section>
+<div id="drawerSummary" class="section">
+  <h2>Drawer Summary</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Drawer</th><th>Opened</th><th>Closed</th>
+        <th>Cash</th><th>Visa</th><th>Master</th><th>AmEx</th><th>Total</th>
+      </tr>
+    </thead>
+    <tbody id="drawerRows"></tbody>
+  </table>
+</div>
 
-    <!-- KPI Row (Total Sales, Cash, Amex, Discover, Visa, Master, Other) -->
-    <section id="kpis" class="mt-6 grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 hidden">
-      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Total Sales</p><p id="k_total" class="text-xl font-bold">—</p></div>
-      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">CASH</p><p id="k_cash" class="text-xl font-bold">—</p></div>
-      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Amex</p><p id="k_amex" class="text-xl font-bold">—</p></div>
-      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Discover</p><p id="k_discover" class="text-xl font-bold">—</p></div>
-      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Visa</p><p id="k_visa" class="text-xl font-bold">—</p></div>
-      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Master</p><p id="k_master" class="text-xl font-bold">—</p></div>
-      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Other</p><p id="k_other" class="text-xl font-bold">—</p></div>
-    </section>
+<div id="hourlySales" class="section">
+  <h2>Hourly Sales</h2>
+  <table>
+    <thead>
+      <tr><th>Time</th><th>Sales</th><th>Receipts</th><th>Trans</th></tr>
+    </thead>
+    <tbody id="hourlyRows"></tbody>
+  </table>
+</div>
 
-    <!-- Charts & Tables -->
-    <section id="viz" class="mt-10 grid lg:grid-cols-5 gap-6 hidden">
-      <div class="lg:col-span-3 p-5 rounded-2xl border border-slate-200">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="font-semibold">Sales by Department</h3>
-          <span id="deptCount" class="text-sm text-slate-500"></span>
-        </div>
-        <canvas id="deptChart" height="160"></canvas>
-      </div>
-      <div class="lg:col-span-2 p-5 rounded-2xl border border-slate-200">
-        <h3 class="font-semibold mb-4">Taxes & Payments</h3>
-        <div class="grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <p class="text-slate-500">Tax A</p><p id="taxA" class="font-semibold">—</p>
-            <p class="text-slate-500 mt-2">Tax B</p><p id="taxB" class="font-semibold">—</p>
-            <p class="text-slate-500 mt-2">Tax C</p><p id="taxC" class="font-semibold">—</p>
-            <p class="text-slate-500 mt-2">Tax Total</p><p id="taxTotal" class="font-semibold">—</p>
-          </div>
-          <div>
-            <p class="text-slate-500">Cash</p><p id="cashTotal" class="font-semibold">—</p>
-            <p class="text-slate-500 mt-2">Visa</p><p id="visaTotal" class="font-semibold">—</p>
-            <p class="text-slate-500 mt-2">Master</p><p id="masterTotal" class="font-semibold">—</p>
-            <p class="text-slate-500 mt-2">AmEx</p><p id="amexTotal" class="font-semibold">—</p>
-          </div>
-        </div>
-      </div>
-    </section>
+<script>
+(function ensureWorker() {
+  // Avoid worker warnings in some setups
+  if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.6.172/pdf.worker.min.js";
+  }
+})();
 
-    <section id="tables" class="mt-10 grid lg:grid-cols-2 gap-6 hidden">
-      <div class="p-5 rounded-2xl border border-slate-200 overflow-x-auto">
-        <h3 class="font-semibold mb-3">Merchandise Summary</h3>
-        <table class="min-w-full text-sm">
-          <thead class="text-left text-slate-500">
-            <tr><th class="py-2 pr-4">Merchandise</th><th class="py-2 pr-4">Qty</th><th class="py-2 pr-4">Dollar Sold</th><th class="py-2 pr-4">CGS</th><th class="py-2 pr-4">Profit</th></tr>
-          </thead>
-          <tbody id="deptRows"></tbody>
-          <tfoot id="deptTotals" class="border-t border-slate-200 font-semibold"></tfoot>
-        </table>
-      </div>
-      <div class="p-5 rounded-2xl border border-slate-200 overflow-x-auto">
-        <h3 class="font-semibold mb-3">Hourly Sales</h3>
-        <table class="min-w-full text-sm">
-          <thead class="text-left text-slate-500">
-            <tr><th class="py-2 pr-4">Time</th><th class="py-2 pr-4">Sales</th><th class="py-2 pr-4">Receipts</th><th class="py-2 pr-4">Trans</th></tr>
-          </thead>
-          <tbody id="hourRows"></tbody>
-        </table>
-      </div>
-    </section>
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status");
 
-    <!-- NEW: Employee & Drawer summaries -->
-    <section id="employees" class="mt-10 p-5 rounded-2xl border border-slate-200 overflow-x-auto hidden">
-      <h3 class="font-semibold mb-3">Employee Summary</h3>
-      <table class="min-w-full text-sm">
-        <thead class="text-left text-slate-500">
-          <tr>
-            <th class="py-2 pr-4">Drawer Id</th>
-            <th class="py-2 pr-4">Employee</th>
-            <th class="py-2 pr-4">Total</th>
-            <th class="py-2 pr-4">Cash</th>
-            <th class="py-2 pr-4">Visa</th>
-            <th class="py-2 pr-4">Master</th>
-            <th class="py-2 pr-4">AmEx</th>
-            <th class="py-2 pr-4">Short</th>
-          </tr>
-        </thead>
-        <tbody id="empRows"></tbody>
-      </table>
-    </section>
+function money(v){
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return "—";
+  const n = Number(v);
+  return n.toLocaleString(undefined, { style: "currency", currency: "USD" });
+}
+function num(s){
+  const m = String(s).match(/-?\d+(?:,\d{3})*(?:\.\d+)?/);
+  if (!m) return 0;
+  return parseFloat(m[0].replace(/,/g, "")) || 0;
+}
 
-    <section id="drawers" class="mt-6 p-5 rounded-2xl border border-slate-200 overflow-x-auto hidden">
-      <h3 class="font-semibold mb-3">Drawer Summary</h3>
-      <table class="min-w-full text-sm">
-        <thead class="text-left text-slate-500">
-          <tr>
-            <th class="py-2 pr-4">Drawer</th>
-            <th class="py-2 pr-4">Opened</th>
-            <th class="py-2 pr-4">Closed</th>
-            <th class="py-2 pr-4">Cash</th>
-            <th class="py-2 pr-4">Visa</th>
-            <th class="py-2 pr-4">Master</th>
-            <th class="py-2 pr-4">AmEx</th>
-            <th class="py-2 pr-4">Total</th>
-          </tr>
-        </thead>
-        <tbody id="drawerRows"></tbody>
-      </table>
-    </section>
+function parseReport(text){
+  const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
+  const joined = lines.join("\n");
 
-    <!-- Dev / Self-tests -->
-    <section id="tests" class="mt-12 rounded-2xl border border-slate-200 p-6">
-      <div class="flex items-center justify-between">
-        <h2 class="text-xl font-semibold">Self-tests</h2>
-        <button id="runTests" class="px-4 py-2 rounded-xl border border-slate-300 hover:bg-slate-50">Run tests</button>
-      </div>
-      <ul id="testLog" class="mt-4 list-disc pl-5 text-sm text-slate-700"></ul>
-    </section>
+  // ---------------- Employee Summary (by employee)
+  const employees = [];
+  const empIdx = lines.findIndex(l => /Employee Summary/i.test(l));
+  if (empIdx !== -1) {
+    const stopIdx = [
+      lines.findIndex((l,i)=> i>empIdx && /(Hourly Sales|Activity By Hour|Merchandise (Department )?Summary|Total All Drawers|Cash Drawer ID|Other Statistics|Report Totals)/i.test(l))
+    ].filter(x => x !== -1).sort((a,b)=>a-b)[0] || lines.length;
+    const seg = lines.slice(empIdx+1, stopIdx);
 
-    <section id="how" class="mt-12 prose prose-slate max-w-none">
-      <h2>How it works</h2>
-      <ol>
-        <li>Click <strong>Choose File</strong> and pick your PDF.</li>
-        <li>Press <strong>Parse & Build Dashboard</strong>. Everything runs in your browser—no server needed.</li>
-        <li>If your report layout differs slightly, tweak the regex rules in <code>parseReport()</code> (bottom of this file).</li>
-      </ol>
-    </section>
-  </main>
+    for (let i = 0; i < seg.length; i++) {
+      let drawerId = null, name = null;
 
-  <script>
-    // ---------- Small utility
-    const $ = (id) => document.getElementById(id);
-    const statusLbl = $('status');
+      // drawer id like "#1" or "1"
+      if (/^#?\d+$/.test(seg[i])) { drawerId = seg[i].replace("#",""); i++; }
 
-    // Ensure pdf.js is actually loaded before we use it.
-    async function waitForPdfJs(timeoutMs = 12000) {
+      // next non-numeric token is the name
+      if (i < seg.length && !/^-?\d+(?:,\d{3})*(?:\.\d+)?$/.test(seg[i])) {
+        name = seg[i];
+        i++;
+      }
+
+      // collect up to 6 numbers: total,cash,visa,master,amex,short
+      const vals = [];
+      while (i < seg.length && vals.length < 6 && /^-?\d+(?:,\d{3})*(?:\.\d+)?$/.test(seg[i])) {
+        vals.push(num(seg[i]));
+        i++;
+      }
+      if (vals.length >= 1 || name) {
+        const [total,cash,visa,master,amex,short_] = vals.concat(Array(6-vals.length).fill(0));
+        employees.push({ drawerId, name, total, cash, visa, master, amex, short: short_ });
+      }
+      i--; // align for loop
+    }
+  }
+
+  // ---------------- Drawer Summary (by drawer)
+  const drawers = [];
+  for (let i=0;i<lines.length;i++){
+    const m = lines[i].match(/Cash Drawer ID\s*(\d+)/i);
+    if (!m) continue;
+    const id = m[1];
+
+    // look ahead (bounded) until next drawer/total
+    const end = (()=>{
+      for (let k=i+1;k<Math.min(i+80,lines.length);k++){
+        if (/Cash Drawer ID\s*\d+/i.test(lines[k]) || /Total All Drawers/i.test(lines[k])) return k;
+      }
+      return Math.min(i+80,lines.length);
+    })();
+    const seg = lines.slice(i+1, end);
+
+    const pick = (label)=>{
+      const idx = seg.findIndex(s => new RegExp("^"+label+":?$","i").test(s));
+      if (idx === -1) return null;
+      for (let j=1;j<=4 && (idx+j)<seg.length;j++){
+        // numeric
+        if (/^-?\d+(?:,\d{3})*(?:\.\d+)?$/.test(seg[idx+j])) return num(seg[idx+j]);
+        // time/date-ish strings
+        if (/^\d{1,2}:\d{2}/.test(seg[idx+j]) || /[-/]\d{2,4}/.test(seg[idx+j])) return seg[idx+j];
+      }
+      return null;
+    };
+
+    const opened = pick("Opened");
+    const closed = pick("Closed");
+    const cash   = pick("Cash")   ?? 0;
+    const visa   = pick("Visa")   ?? 0;
+    const master = pick("Master") ?? 0;
+    const amex   = pick("AmEx")   ?? 0;
+    const total  = pick("Total")  ?? (cash + visa + master + amex);
+    drawers.push({ id, opened, closed, cash, visa, master, amex, total });
+  }
+
+  // ---------------- Hourly Sales / Activity By Hour (robust)
+  // Accept either header label
+  const hours = [];
+  const hourHeaderIdx = lines.findIndex(l => /^(Hourly Sales|Activity By Hour)$/i.test(l));
+  if (hourHeaderIdx !== -1) {
+    const stopIdx = [
+      lines.findIndex((l,i)=> i>hourHeaderIdx && /(Other Statistics|Employee Summary|Merchandise (Department )?Summary|Total All Drawers|Cash Drawer ID|Report Totals)/i.test(l))
+    ].filter(x=>x!==-1).sort((a,b)=>a-b)[0] || lines.length;
+    const seg = lines.slice(hourHeaderIdx+1, stopIdx);
+
+    // time range pattern examples:
+    // "11am - 12pm", "11:00 am–12:00 pm", "11 am to 12 pm"
+    const timeRe = /(\d{1,2}(?::\d{2})?\s*(?:am|pm))\s*(?:-|–|to)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm))/ig;
+
+    for (let k = 0; k < seg.length; k++) {
+      const line = seg[k];
+      const matches = [...line.matchAll(timeRe)];
+      if (matches.length === 0) continue;
+
+      for (const m of matches) {
+        const label = `${m[1].replace(/\s+/g,'')} – ${m[2].replace(/\s+/g,'')}`;
+        const nums = [];
+
+        // 1) numbers on same line after the match
+        const tail = line.slice(m.index + m[0].length);
+        const same = tail.match(/-?\d+(?:,\d{3})*(?:\.\d+)?/g) || [];
+        same.forEach(v => { if (nums.length < 3) nums.push(num(v)); });
+
+        // 2) if fewer than 3, scan following lines until next time header
+        let j = k + 1;
+        while (nums.length < 3 && j < seg.length) {
+          if (timeRe.test(seg[j])) { timeRe.lastIndex = 0; break; }
+          const more = seg[j].match(/-?\d+(?:,\d{3})*(?:\.\d+)?/g) || [];
+          more.forEach(v => { if (nums.length < 3) nums.push(num(v)); });
+          j++;
+        }
+
+        hours.push({
+          time: label,
+          sales: nums[0] ?? 0,
+          receipts: Number.isFinite(nums[1]) ? nums[1] : null,
+          trans: Number.isFinite(nums[2]) ? nums[2] : null
+        });
+      }
+    }
+  }
+
+  return { employees, drawers, hours };
+}
+
+function render(r){
+  // Employees
+  if (r.employees.length){
+    $("employeeSummary").style.display='block';
+    const tbody = $("empRows"); tbody.innerHTML = '';
+    r.employees.forEach(e=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML =
+        `<td>${e.drawerId ?? ""}</td><td>${e.name ?? ""}</td>
+         <td>${money(e.total)}</td><td>${money(e.cash)}</td>
+         <td>${money(e.visa)}</td><td>${money(e.master)}</td>
+         <td>${money(e.amex)}</td><td>${money(e.short)}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  // Drawers
+  if (r.drawers.length){
+    $("drawerSummary").style.display='block';
+    const tbody = $("drawerRows"); tbody.innerHTML = '';
+    r.drawers.forEach(d=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML =
+        `<td>#${d.id}</td><td>${d.opened ?? ""}</td><td>${d.closed ?? ""}</td>
+         <td>${money(d.cash)}</td><td>${money(d.visa)}</td>
+         <td>${money(d.master)}</td><td>${money(d.amex)}</td>
+         <td>${money(d.total)}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  // Hourly
+  if (r.hours.length){
+    $("hourlySales").style.display='block';
+    const tbody = $("hourlyRows"); tbody.innerHTML = '';
+    r.hours.forEach(h=>{
+      const tr=document.createElement('tr');
+      const intOrDash = (v)=> (v===null||v===undefined||Number.isNaN(v)) ? "—" : Number(v).toLocaleString();
+      tr.innerHTML =
+        `<td>${h.time}</td><td>${money(h.sales)}</td>
+         <td>${intOrDash(h.receipts)}</td><td>${intOrDash(h.trans)}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+}
+
+// ------- File → PDF text → parse → render
+$("pdfFile").addEventListener('change', async (e)=>{
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  statusEl.textContent = "Loading PDF…";
+  try {
+    // wait for pdfjs to be ready
+    await new Promise((res, rej) => {
       const start = performance.now();
-      return new Promise((resolve, reject) => {
-        (function check() {
-          if (window.pdfjsLib) {
-            try {
-              window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
-            } catch (e) { /* ignore */ }
-            return resolve(window.pdfjsLib);
-          }
-          if (performance.now() - start > timeoutMs) {
-            return reject(new Error('pdf.js failed to load in time'));
-          }
-          setTimeout(check, 50);
-        })();
-      });
-    }
-
-    function refreshParseEnabled() {
-      const hasFile = !!$('fileInput').files?.length;
-      const libReady = !!window.pdfjsLib;
-      $('parseBtn').disabled = !(hasFile && libReady);
-    }
-    $('fileInput').addEventListener('change', refreshParseEnabled);
-    document.getElementById('pdfjs-script').addEventListener('error', () => {
-      $('libWarning').classList.remove('hidden');
-    });
-    document.addEventListener('DOMContentLoaded', async () => {
-      try { await waitForPdfJs(); } catch { $('libWarning').classList.remove('hidden'); }
-      refreshParseEnabled();
+      (function tick(){
+        if (window.pdfjsLib) return res();
+        if (performance.now() - start > 12000) return rej(new Error("pdf.js failed to load"));
+        setTimeout(tick, 50);
+      })();
     });
 
-    // Progress + cancel
-    let cancelFlag = false; const setProgress = (m) => statusLbl.textContent = m;
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cancelFlag = true; });
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
 
-    $('parseBtn').addEventListener('click', async () => {
-      if (!$('fileInput').files?.length) return;
-      cancelFlag = false;
-      try { setProgress('Loading PDF engine…'); await waitForPdfJs(); } catch { setProgress('PDF engine failed to load.'); return; }
-      try {
-        const file = $('fileInput').files[0];
-        setProgress('Reading PDF (0%)…');
-        const pdfText = await readPdfAsText(file, (p,n)=> setProgress(`Reading PDF (${Math.round((p-1)/n*100)}%)…`));
-        if (cancelFlag) return setProgress('Cancelled');
-        setProgress('Parsing…');
-        const report = parseReport(pdfText);
-        if (!report) { setProgress('Could not parse this PDF.'); return; }
-        setProgress('Rendering dashboard…');
-        render(report);
-        setProgress('Done');
-      } catch (e) { console.error(e); setProgress('Unexpected error. See console.'); }
-    });
-
-    async function readPdfAsText(file, onProgress = ()=>{}) {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let fullText = '';
-      for (let p = 1; p <= pdf.numPages; p++) {
-        if (cancelFlag) break;
-        onProgress(p, pdf.numPages);
-        const page = await pdf.getPage(p);
-        const content = await withTimeout(page.getTextContent({ normalizeWhitespace: true }), 8000).catch(()=>null);
-        const items = content?.items || [];
-        const pageText = items.map(it => it?.str || '').join('\n');
-        fullText += `\n\n[[[PAGE ${p}]]]\n` + pageText;
-        await new Promise(r => setTimeout(r, 0)); // let UI paint
-      }
-      return fullText;
-    }
-    function withTimeout(promise, ms) { return new Promise((res, rej)=>{ const t=setTimeout(()=>rej(new Error('timeout')),ms); promise.then(v=>{clearTimeout(t);res(v);},e=>{clearTimeout(t);rej(e);});}); }
-    function money(n) { if (n===null||n===undefined||Number.isNaN(n)) return '—'; return n.toLocaleString(undefined,{style:'currency',currency:'USD'}); }
-    function num(x) { const v = Number(String(x).replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:0; }
-
-    // -------- Parser (multi-line friendly)
-    function parseReport(text) {
-      const rawLines = text.split(/\n+/).map(s => s.trim());
-      const lines = rawLines.filter(Boolean);
-      const joined = lines.join('\n');
-
-      // Store (value might be on the next line)
-      let store = 'Unknown';
-      for (let i = 0; i < lines.length; i++) {
-        if (/^Store:?$/i.test(lines[i]) && lines[i+1]) { store = lines[i+1]; break; }
-        const m = lines[i].match(/^Store:\s*(.+)$/i); if (m) { store = m[1].trim(); break; }
-      }
-
-      // Report window (single line with 'through')
-      const winMatch = joined.match(/For all transactions\s+([^\n]+?)\s+through\s+([^\n]+)/i);
-      const windowStr = winMatch ? `${winMatch[1].replace(/\s+/g,' ')} → ${winMatch[2].replace(/\s+/g,' ')}` : '—';
-
-      // Payments/KPIs (label then value on a following line)
-      const payKeys = ['Cash','AmEx','Discover','Visa','Master','Other','Check','Total'];
-      const payments = Object.fromEntries(payKeys.map(k => [k, null]));
-      for (let i = 0; i < lines.length; i++) {
-        const label = lines[i].replace(/:$/, '');
-        if (payKeys.includes(label)) {
-          for (let j = 1; j <= 4 && (i+j) < lines.length; j++) {
-            const v = lines[i+j];
-            if (/^-?[0-9,.]+$/.test(v)) { payments[label] = num(v); break; }
-          }
-        }
-      }
-
-      // Merchandise department summary
-      const dept = [];
-      const startIdx = lines.findIndex(l => /Merchandise (Department )?Summary/i.test(l));
-      if (startIdx !== -1) {
-        let i = startIdx + 1;
-        while (i < lines.length) {
-          const l = lines[i];
-          if (/^Report Totals:/i.test(l) || /Employee Summary/i.test(l) || /Cash Drawer ID/i.test(l) || /Hourly Sales/i.test(l)) break;
-          if (/^[A-Z0-9' &.-]+$/.test(l) && !/^\d/.test(l)) {
-            const name = l;
-            const n1 = lines[i+1], n2 = lines[i+2], n3 = lines[i+3], n4 = lines[i+4];
-            if (/^-?[0-9,.]+$/.test(n1) && /^-?[0-9,.]+$/.test(n2)) {
-              dept.push({ name, numberSold: num(n1), dollarSold: num(n2), cgs: /^-?[0-9,.]+$/.test(n3)?num(n3):0, profit: /^-?[0-9,.]+$/.test(n4)?num(n4):0 });
-              i += 5; continue;
-            }
-          }
-          i++;
-        }
-      }
-      let deptTotals = null;
-      const rt = joined.match(/Report Totals:\s*(\d+)\s+([0-9,.-]+)\s+([0-9,.-]+)\s+([0-9,.-]+)/i);
-      if (rt) deptTotals = { items: num(rt[1]), sold: num(rt[2]), cgs: num(rt[3]), profit: num(rt[4]) };
-
-      // Totals All Drawers (aggregate)
-      let totalsAll = null;
-      const tAllBlockIdx = lines.findIndex(l => /Total All Drawers/i.test(l));
-      if (tAllBlockIdx !== -1) {
-        const slice = lines.slice(tAllBlockIdx, tAllBlockIdx + 80);
-        const tmap = { cash: null, amex: null, discover: null, visa: null, master: null, other: null, total: null };
-        for (let k = 0; k < slice.length; k++) {
-          const token = slice[k].replace(/:$/, '').toLowerCase();
-          if (token in tmap) {
-            for (let j = 1; j <= 4 && (k+j) < slice.length; j++) {
-              if (/^-?[0-9,.]+$/.test(slice[k+j])) { tmap[token] = num(slice[k+j]); break; }
-            }
-          }
-        }
-        totalsAll = { cash: tmap.cash||0, amex: tmap.amex||0, visa: tmap.visa||0, master: tmap.master||0, total: tmap.total||0 };
-      }
-
-      // Employee Summary (by employee; values on subsequent lines)
-      const employees = [];
-      const empIdx = lines.findIndex(l => /Employee Summary/i.test(l));
-      if (empIdx !== -1) {
-        const stopIdx = [
-          lines.findIndex((l,idx)=> idx>empIdx && /Merchandise (Department )?Summary|Hourly Sales|Total All Drawers|Cash Drawer ID/i.test(l)),
-        ].filter(x=>x!==-1).sort((a,b)=>a-b)[0] || lines.length;
-        const seg = lines.slice(empIdx+1, stopIdx);
-        for (let i = 0; i < seg.length; i++) {
-          let drawerId = null; let name = null;
-          if (/^#?\d+$/.test(seg[i])) { drawerId = seg[i].replace('#',''); i++; }
-          if (i < seg.length && !/^-?[0-9,.]+$/.test(seg[i]) && !/^(Total|Cash|Visa|Master|AmEx|Short)$/i.test(seg[i])) { name = seg[i]; i++; }
-          const nums = [];
-          while (i < seg.length && nums.length < 6 && /^-?[0-9,.]+$/.test(seg[i])) { nums.push(num(seg[i])); i++; }
-          if (nums.length >= 2) {
-            const [total,cash,visa,master,amex,short_] = nums.concat(Array(6-nums.length).fill(0));
-            employees.push({ drawerId, name, total, cash, visa, master, amex, short: short_ });
-            i--; // keep place
-          }
-        }
-      }
-
-      // Drawer Summary (by drawer)
-      const drawer = [];
-      for (let i = 0; i < lines.length; i++) {
-        const m = lines[i].match(/Cash Drawer ID\s*(\d+)/i);
-        if (m) {
-          const id = m[1];
-          // next block until next drawer or totals
-          const end = (()=>{ for (let k=i+1;k<Math.min(i+80,lines.length);k++){ if (/Cash Drawer ID\s*\d+/i.test(lines[k]) || /Total All Drawers/i.test(lines[k])) return k; } return Math.min(i+80,lines.length); })();
-          const seg = lines.slice(i+1,end);
-          const pick = (label)=>{
-            const idx = seg.findIndex(s=> new RegExp('^'+label+':?$', 'i').test(s));
-            if (idx!==-1){
-              for (let j=1;j<=3 && (idx+j)<seg.length;j++){
-                if (/^-?[0-9,.]+$/.test(seg[idx+j])) return num(seg[idx+j]);
-                if (/[0-9]{2}:[0-9]{2}|[0-9]{1,2}[-/][A-Za-z0-9]{2,}/.test(seg[idx+j])) return seg[idx+j]; // simple date/time grab
-              }
-            }
-            return null;
-          };
-          const opened = pick('Opened');
-          const closed = pick('Closed');
-          const cash = pick('Cash') ?? 0;
-          const visa = pick('Visa') ?? 0;
-          const master = pick('Master') ?? 0;
-          const amex = pick('AmEx') ?? 0;
-          const total = pick('Total') ?? (cash+visa+master+amex);
-          drawer.push({ id, opened, closed, cash, visa, master, amex, total });
-        }
-      }
-
-      const income = { subtotal: null, grandTotal: payments.Total ?? totalsAll?.total ?? null, taxA: null, taxB: null, taxC: null, taxTotal: null };
-      return { store, windowStr, income, payments, dept, deptTotals, drawer, totalsAll, employees };
+    let text = "";
+    for (let p=1; p<=pdf.numPages; p++){
+      statusEl.textContent = `Reading page ${p}/${pdf.numPages}…`;
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent({ normalizeWhitespace: true });
+      text += content.items.map(it => it?.str || "").join("\n") + "\n";
+      await new Promise(r => setTimeout(r, 0)); // let UI update
     }
 
-    function render(r) {
-      $('summary').classList.remove('hidden');
-      $('kpis').classList.remove('hidden');
-      $('viz').classList.remove('hidden');
-      $('tables').classList.remove('hidden');
-      if ((r.employees||[]).length) $('employees').classList.remove('hidden');
-      if ((r.drawer||[]).length) $('drawers').classList.remove('hidden');
-
-      $('store').textContent = r.store;
-      $('window').textContent = r.windowStr;
-      $('incomeSubtotal').textContent = money(r.income.subtotal);
-      $('grandTotal').textContent = money(r.income.grandTotal);
-
-      // KPIs
-      const pay = r.payments || {};
-      $('k_total').textContent = money(pay.Total ?? r.totalsAll?.total ?? 0);
-      $('k_cash').textContent = money(pay.Cash ?? r.totalsAll?.cash ?? 0);
-      $('k_amex').textContent = money(pay.Amex ?? r.totalsAll?.amex ?? 0);
-      $('k_discover').textContent = money(pay.Discover ?? 0);
-      $('k_visa').textContent = money(pay.Visa ?? r.totalsAll?.visa ?? 0);
-      $('k_master').textContent = money(pay.Master ?? r.totalsAll?.master ?? 0);
-      $('k_other').textContent = money(pay.Other ?? 0);
-
-      // Sidebar totals
-      $('cashTotal').textContent = $('k_cash').textContent;
-      $('visaTotal').textContent = $('k_visa').textContent;
-      $('masterTotal').textContent = $('k_master').textContent;
-      $('amexTotal').textContent = $('k_amex').textContent;
-
-      // Departments table
-      const tbody = $('deptRows'); tbody.innerHTML = '';
-      r.dept.forEach(d => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td class="py-2 pr-4">${d.name}</td>
-                        <td class="py-2 pr-4">${d.numberSold}</td>
-                        <td class="py-2 pr-4">${money(d.dollarSold)}</td>
-                        <td class="py-2 pr-4">${money(d.cgs)}</td>
-                        <td class="py-2 pr-4">${money(d.profit)}</td>`;
-        tbody.appendChild(tr);
-      });
-      const tfoot = $('deptTotals');
-      const items = r.deptTotals?.items ?? r.dept.reduce((a,d)=>a+d.numberSold,0);
-      const sold = r.deptTotals?.sold ?? r.dept.reduce((a,d)=>a+d.dollarSold,0);
-      const cgs = r.deptTotals?.cgs ?? r.dept.reduce((a,d)=>a+d.cgs,0);
-      const prof = r.deptTotals?.profit ?? r.dept.reduce((a,d)=>a+d.profit,0);
-      tfoot.innerHTML = `<tr><td class="py-2 pr-4">Report Totals</td><td class="py-2 pr-4">${items}</td><td class="py-2 pr-4">${money(sold)}</td><td class="py-2 pr-4">${money(cgs)}</td><td class="py-2 pr-4">${money(prof)}</td></tr>`;
-
-      // Department chart
-      $('deptCount').textContent = `${r.dept.length} departments`;
-      const ctx = $('deptChart').getContext('2d');
-      const labels = r.dept.map(d => d.name);
-      const values = r.dept.map(d => d.dollarSold);
-      new Chart(ctx, { type: 'bar', data: { labels, datasets: [{ label: 'Sales ($)', data: values }] }, options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } } });
-
-      // Employee table
-      const ebody = $('empRows'); ebody.innerHTML = '';
-      (r.employees || []).forEach(row => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td class="py-2 pr-4">${row.drawerId ?? ''}</td>
-                        <td class="py-2 pr-4">${row.name ?? ''}</td>
-                        <td class="py-2 pr-4">${money(row.total)}</td>
-                        <td class="py-2 pr-4">${money(row.cash)}</td>
-                        <td class="py-2 pr-4">${money(row.visa)}</td>
-                        <td class="py-2 pr-4">${money(row.master)}</td>
-                        <td class="py-2 pr-4">${money(row.amex)}</td>
-                        <td class="py-2 pr-4">${money(row.short)}</td>`;
-        ebody.appendChild(tr);
-      });
-
-      // Drawer table
-      const dbody = $('drawerRows'); dbody.innerHTML = '';
-      (r.drawer || []).forEach(d => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td class="py-2 pr-4">#${d.id}</td>
-                        <td class="py-2 pr-4 whitespace-nowrap">${d.opened ?? ''}</td>
-                        <td class="py-2 pr-4 whitespace-nowrap">${d.closed ?? ''}</td>
-                        <td class="py-2 pr-4">${money(d.cash)}</td>
-                        <td class="py-2 pr-4">${money(d.visa)}</td>
-                        <td class="py-2 pr-4">${money(d.master)}</td>
-                        <td class="py-2 pr-4">${money(d.amex)}</td>
-                        <td class="py-2 pr-4">${money(d.total)}</td>`;
-        dbody.appendChild(tr);
-      });
-    }
-
-    // ----------- Self-tests
-    function assertEqual(actual, expected, msg) {
-      const li = document.createElement('li');
-      const ok = Object.is(actual, expected);
-      li.textContent = (ok ? '✅ ' : '❌ ') + msg + ' → got: ' + JSON.stringify(actual) + ', expected: ' + JSON.stringify(expected);
-      if (!ok) li.classList.add('text-red-600');
-      $('testLog').appendChild(li);
-    }
-
-    $('runTests').addEventListener('click', () => {
-      $('testLog').innerHTML = '';
-      assertEqual(money(1234.5).startsWith('$'), true, 'money() returns currency');
-      assertEqual(num('1,234.56'), 1234.56, 'num() parses commas and decimals');
-      const sample = `Store:
-Demo Store
-For all transactions 27-Jun-2025 4:00 am through 28-Jun-2025 4:00 am
-Merchandise Department Summary
-LINGERIE
-13
-306.87
-100.03
-206.84
-Report Totals: 13 306.87 100.03 206.84
-Employee Summary
-#1
-Alice
-160.00
-100.00
-20.00
-30.00
-10.00
-0.00
-Cash Drawer ID 1 Summary
-Opened:
-06-27-2025 08:00
-Closed:
-06-27-2025 17:00
-Cash:
-100.00
-Visa:
-20.00
-Master:
-30.00
-AmEx:
-10.00
-Total:
-160.00
-Total All Drawers
-Cash:
-111.20
-Visa:
-636.60
-Master
-204.49
-AmEx:
-48.74
-Total:
-1760.01`;
-      const r = parseReport(sample);
-      assertEqual(r.store, 'Demo Store', 'store');
-      assertEqual(r.dept.length, 1, 'dept rows');
-      assertEqual((r.employees||[]).length > 0, true, 'employee rows parsed');
-      assertEqual((r.drawer||[]).length > 0, true, 'drawer rows parsed');
-      assertEqual(r.payments.Cash, 111.20, 'cash extracted');
-      assertEqual(r.payments.Amex, 48.74, 'amex extracted');
-      assertEqual(r.payments.Visa, 636.60, 'visa extracted');
-      assertEqual(r.income.grandTotal, 1760.01, 'grand total from payments');
-    });
-  </script>
+    statusEl.textContent = "Parsing…";
+    const report = parseReport(text);
+    statusEl.textContent = "Rendering…";
+    render(report);
+    statusEl.textContent = "Done.";
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "Failed to read this PDF. Check the console for details.";
+  }
+});
+</script>
 </body>
 </html>
