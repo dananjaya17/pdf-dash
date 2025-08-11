@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>POS PDF → Live Dashboard (v2 parser)</title>
+  <meta name="description" content="Upload a Crystal Reports‑style POS PDF and see a live dashboard parsed on the same page." />
+
+  <!-- Tailwind for layout -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { theme: { extend: { colors: { brand: { 50:'#eff6ff',100:'#dbeafe',200:'#bfdbfe',300:'#93c5fd',400:'#60a5fa',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',800:'#1e40af',900:'#1e3a8a' } } } } } };
+  </script>
+
+  <!-- pdf.js (UMD build exposes global `pdfjsLib`) -->
+  <script id="pdfjs-script" src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js" crossorigin="anonymous"></script>
+
+  <!-- Chart.js for quick charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <style>
+    html { scroll-behavior: smooth; }
+  </style>
+</head>
+<body class="bg-white text-slate-800 antialiased">
+  <header class="sticky top-0 z-50 bg-white/80 backdrop-blur border-b border-slate-200">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded-lg bg-brand-600"></div>
+        <h1 class="font-bold tracking-tight">POS PDF → Dashboard</h1>
+      </div>
+      <a href="#how" class="text-sm hover:text-brand-700">How it works</a>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+    <!-- Upload Card -->
+    <section class="rounded-2xl border border-slate-200 p-6">
+      <h2 class="text-xl font-semibold">Upload your daily PDF</h2>
+      <p class="text-slate-600 mt-1">Works with Crystal Reports‑style end‑of‑day PDFs like the sample you shared.</p>
+      <div class="mt-4 flex flex-col sm:flex-row items-start gap-4">
+        <input id="fileInput" type="file" accept="application/pdf" class="block w-full sm:w-auto file:mr-4 file:rounded-xl file:border-0 file:bg-brand-600 file:px-4 file:py-2 file:text-white hover:file:bg-brand-700 file:cursor-pointer" />
+        <button id="parseBtn" class="px-4 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50" disabled>Parse & Build Dashboard</button>
+        <div id="status" class="text-sm text-slate-500"></div>
+      </div>
+      <p id="libWarning" class="hidden mt-2 text-sm text-red-600">PDF engine failed to load. Check your internet connection or content security policy and reload.</p>
+      <p class="mt-2 text-xs text-slate-500">Tip: Press <kbd>Esc</kbd> to cancel a long read.</p>
+    </section>
+
+    <!-- Summary Cards -->
+    <section id="summary" class="mt-10 grid sm:grid-cols-2 lg:grid-cols-4 gap-4 hidden">
+      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Store</p><p id="store" class="text-xl font-bold">—</p></div>
+      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Report Window</p><p id="window" class="text-xl font-bold">—</p></div>
+      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Income Subtotal</p><p id="incomeSubtotal" class="text-xl font-bold">—</p></div>
+      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Grand Total</p><p id="grandTotal" class="text-xl font-bold">—</p></div>
+    </section>
+
+    <!-- KPI Row requested (Total Sales, Cash, Amex, Discover, Visa, Master, Other) -->
+    <section id="kpis" class="mt-6 grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 hidden">
+      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Total Sales</p><p id="k_total" class="text-xl font-bold">—</p></div>
+      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">CASH</p><p id="k_cash" class="text-xl font-bold">—</p></div>
+      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Amex</p><p id="k_amex" class="text-xl font-bold">—</p></div>
+      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Discover</p><p id="k_discover" class="text-xl font-bold">—</p></div>
+      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Visa</p><p id="k_visa" class="text-xl font-bold">—</p></div>
+      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Master</p><p id="k_master" class="text-xl font-bold">—</p></div>
+      <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Other</p><p id="k_other" class="text-xl font-bold">—</p></div>
+    </section>
+
+    <!-- Charts & Tables -->
+    <section id="viz" class="mt-10 grid lg:grid-cols-5 gap-6 hidden">
+      <div class="lg:col-span-3 p-5 rounded-2xl border border-slate-200">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-semibold">Sales by Department</h3>
+          <span id="deptCount" class="text-sm text-slate-500"></span>
+        </div>
+        <canvas id="deptChart" height="160"></canvas>
+      </div>
+      <div class="lg:col-span-2 p-5 rounded-2xl border border-slate-200">
+        <h3 class="font-semibold mb-4">Taxes & Payments</h3>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <p class="text-slate-500">Tax A</p><p id="taxA" class="font-semibold">—</p>
+            <p class="text-slate-500 mt-2">Tax B</p><p id="taxB" class="font-semibold">—</p>
+            <p class="text-slate-500 mt-2">Tax C</p><p id="taxC" class="font-semibold">—</p>
+            <p class="text-slate-500 mt-2">Tax Total</p><p id="taxTotal" class="font-semibold">—</p>
+          </div>
+          <div>
+            <p class="text-slate-500">Cash</p><p id="cashTotal" class="font-semibold">—</p>
+            <p class="text-slate-500 mt-2">Visa</p><p id="visaTotal" class="font-semibold">—</p>
+            <p class="text-slate-500 mt-2">Master</p><p id="masterTotal" class="font-semibold">—</p>
+            <p class="text-slate-500 mt-2">AmEx</p><p id="amexTotal" class="font-semibold">—</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tables" class="mt-10 grid lg:grid-cols-2 gap-6 hidden">
+      <div class="p-5 rounded-2xl border border-slate-200 overflow-x-auto">
+        <h3 class="font-semibold mb-3">Merchandise Summary</h3>
+        <table class="min-w-full text-sm">
+          <thead class="text-left text-slate-500">
+            <tr><th class="py-2 pr-4">Merchandise</th><th class="py-2 pr-4">Qty</th><th class="py-2 pr-4">Dollar Sold</th><th class="py-2 pr-4">CGS</th><th class="py-2 pr-4">Profit</th></tr>
+          </thead>
+          <tbody id="deptRows"></tbody>
+          <tfoot id="deptTotals" class="border-t border-slate-200 font-semibold"></tfoot>
+        </table>
+      </div>
+      <div class="p-5 rounded-2xl border border-slate-200 overflow-x-auto">
+        <h3 class="font-semibold mb-3">Hourly Sales</h3>
+        <table class="min-w-full text-sm">
+          <thead class="text-left text-slate-500">
+            <tr><th class="py-2 pr-4">Time</th><th class="py-2 pr-4">Sales</th><th class="py-2 pr-4">Receipts</th><th class="py-2 pr-4">Trans</th></tr>
+          </thead>
+          <tbody id="hourRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Dev / Self‑tests -->
+    <section id="tests" class="mt-12 rounded-2xl border border-slate-200 p-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-xl font-semibold">Self‑tests</h2>
+        <button id="runTests" class="px-4 py-2 rounded-xl border border-slate-300 hover:bg-slate-50">Run tests</button>
+      </div>
+      <ul id="testLog" class="mt-4 list-disc pl-5 text-sm text-slate-700"></ul>
+    </section>
+
+    <section id="how" class="mt-12 prose prose-slate max-w-none">
+      <h2>How it works</h2>
+      <ol>
+        <li>Click <strong>Choose File</strong> and pick your PDF.</li>
+        <li>Press <strong>Parse & Build Dashboard</strong>. Everything runs in your browser—no server needed.</li>
+        <li>If your report layout differs slightly, tweak the regex rules in <code>parseReport()</code> (bottom of this file).</li>
+      </ol>
+    </section>
+  </main>
+
+  <script>
+    // ---------- Small utility
+    const $ = (id) => document.getElementById(id);
+    const statusLbl = $('status');
+
+    // Ensure pdf.js is actually loaded before we use it.
+    async function waitForPdfJs(timeoutMs = 12000) {
+      const start = performance.now();
+      return new Promise((resolve, reject) => {
+        (function check() {
+          if (window.pdfjsLib) {
+            try {
+              window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+            } catch (e) { /* ignore */ }
+            return resolve(window.pdfjsLib);
+          }
+          if (performance.now() - start > timeoutMs) {
+            return reject(new Error('pdf.js failed to load in time'));
+          }
+          setTimeout(check, 50);
+        })();
+      });
+    }
+
+    function refreshParseEnabled() {
+      const hasFile = !!$('fileInput').files?.length;
+      const libReady = !!window.pdfjsLib;
+      $('parseBtn').disabled = !(hasFile && libReady);
+    }
+    $('fileInput').addEventListener('change', refreshParseEnabled);
+    document.getElementById('pdfjs-script').addEventListener('error', () => {
+      $('libWarning').classList.remove('hidden');
+    });
+    document.addEventListener('DOMContentLoaded', async () => {
+      try { await waitForPdfJs(); } catch { $('libWarning').classList.remove('hidden'); }
+      refreshParseEnabled();
+    });
+
+    // Progress + cancel
+    let cancelFlag = false; const setProgress = (m) => statusLbl.textContent = m;
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cancelFlag = true; });
+
+    $('parseBtn').addEventListener('click', async () => {
+      if (!$('fileInput').files?.length) return;
+      cancelFlag = false;
+      try { setProgress('Loading PDF engine…'); await waitForPdfJs(); } catch { setProgress('PDF engine failed to load.'); return; }
+      try {
+        const file = $('fileInput').files[0];
+        setProgress('Reading PDF (0%)…');
+        const pdfText = await readPdfAsText(file, (p,n)=> setProgress(`Reading PDF (${Math.round((p-1)/n*100)}%)…`));
+        if (cancelFlag) return setProgress('Cancelled');
+        setProgress('Parsing…');
+        const report = parseReport(pdfText);
+        if (!report) { setProgress('Could not parse this PDF.'); return; }
+        setProgress('Rendering dashboard…');
+        render(report);
+        setProgress('Done');
+      } catch (e) { console.error(e); setProgress('Unexpected error. See console.'); }
+    });
+
+    async function readPdfAsText(file, onProgress = ()=>{}) {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = '';
+      for (let p = 1; p <= pdf.numPages; p++) {
+        if (cancelFlag) break;
+        onProgress(p, pdf.numPages);
+        const page = await pdf.getPage(p);
+        const content = await withTimeout(page.getTextContent({ normalizeWhitespace: true }), 8000).catch(()=>null);
+        const items = content?.items || [];
+        const pageText = items.map(it => it?.str || '').join('\n');
+        fullText += `\n\n[[[PAGE ${p}]]]\n` + pageText;
+        await new Promise(r => setTimeout(r, 0));
+      }
+      return fullText;
+    }
+    function withTimeout(promise, ms) { return new Promise((res, rej)=>{ const t=setTimeout(()=>rej(new Error('timeout')),ms); promise.then(v=>{clearTimeout(t);res(v);},e=>{clearTimeout(t);rej(e);});}); }
+    function money(n) { if (n===null||n===undefined||Number.isNaN(n)) return '—'; return n.toLocaleString(undefined,{style:'currency',currency:'USD'}); }
+    function num(x) { const v = Number(String(x).replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:0; }
+
+    // -------- Parser (multi‑line friendly)
+    function parseReport(text) {
+      const rawLines = text.split(/\n+/).map(s => s.trim());
+      const lines = rawLines.filter(Boolean);
+      const joined = lines.join('\n');
+
+      // Store
+      let store = 'Unknown';
+      for (let i = 0; i < lines.length; i++) {
+        if (/^Store:?$/i.test(lines[i]) && lines[i+1]) { store = lines[i+1]; break; }
+        const m = lines[i].match(/^Store:\s*(.+)$/i); if (m) { store = m[1].trim(); break; }
+      }
+      // Window
+      const winMatch = joined.match(/For all transactions\s+([^\n]+?)\s+through\s+([^\n]+)/i);
+      const windowStr = winMatch ? `${winMatch[1].replace(/\s+/g,' ')} → ${winMatch[2].replace(/\s+/g,' ')}` : '—';
+
+      // Payments
+      const payKeys = ['Cash','AmEx','Discover','Visa','Master','Other','Check','Total'];
+      const payments = Object.fromEntries(payKeys.map(k => [k, null]));
+      for (let i = 0; i < lines.length; i++) {
+        const label = lines[i].replace(/:$/, '');
+        if (payKeys.includes(label)) {
+          for (let j = 0; j < 3 && (i+j+1) < lines.length; j++) {
+            const v = lines[i+j+1];
+            if (/^-?[0-9,.]+$/.test(v)) { payments[label] = num(v); break; }
+          }
+        }
+      }
+
+      // Departments
+      const dept = [];
+      const startIdx = lines.findIndex(l => /Merchandise (Department )?Summary/i.test(l));
+      if (startIdx !== -1) {
+        let i = startIdx + 1;
+        while (i < lines.length) {
+          const l = lines[i];
+          if (/^Report Totals:/i.test(l) || /Employee Summary/i.test(l) || /Cash Drawer ID/i.test(l)) break;
+          if (/^[A-Z0-9' &.-]+$/.test(l) && !/^\d/.test(l)) {
+            const name = l;
+            const n1 = lines[i+1], n2 = lines[i+2], n3 = lines[i+3], n4 = lines[i+4];
+            if (/^-?[0-9,.]+$/.test(n1) && /^-?[0-9,.]+$/.test(n2)) {
+              dept.push({ name, numberSold: num(n1), dollarSold: num(n2), cgs: /^-?[0-9,.]+$/.test(n3)?num(n3):0, profit: /^-?[0-9,.]+$/.test(n4)?num(n4):0 });
+              i += 5; continue;
+            }
+          }
+          i++;
+        }
+      }
+      let deptTotals = null;
+      const rt = joined.match(/Report Totals:\s*(\d+)\s+([0-9,.-]+)\s+([0-9,.-]+)\s+([0-9,.-]+)/i);
+      if (rt) deptTotals = { items: num(rt[1]), sold: num(rt[2]), cgs: num(rt[3]), profit: num(rt[4]) };
+
+      // Aggregate drawers (optional)
+      let totalsAll = null;
+      const tAllBlockIdx = lines.findIndex(l => /Total All Drawers/i.test(l));
+      if (tAllBlockIdx !== -1) {
+        const slice = lines.slice(tAllBlockIdx, tAllBlockIdx + 40);
+        const tmap = { cash: null, amex: null, discover: null, visa: null, master: null, other: null, total: null };
+        for (let k = 0; k < slice.length; k++) {
+          const token = slice[k].replace(/:$/, '').toLowerCase();
+          if (token in tmap) {
+            for (let j = 1; j <= 3 && (k+j) < slice.length; j++) {
+              if (/^-?[0-9,.]+$/.test(slice[k+j])) { tmap[token] = num(slice[k+j]); break; }
+            }
+          }
+        }
+        totalsAll = { cash: tmap.cash||0, amex: tmap.amex||0, visa: tmap.visa||0, master: tmap.master||0, total: tmap.total||0 };
+      }
+
+      const income = { subtotal: null, grandTotal: payments.Total ?? totalsAll?.total ?? null, taxA: null, taxB: null, taxC: null, taxTotal: null };
+      return { store, windowStr, income, payments, dept, deptTotals, drawer: [], totalsAll };
+    }
+
+    function render(r) {
+      $('summary').classList.remove('hidden');
+      $('kpis').classList.remove('hidden');
+      $('viz').classList.remove('hidden');
+      $('tables').classList.remove('hidden');
+      $('store').textContent = r.store;
+      $('window').textContent = r.windowStr;
+      $('incomeSubtotal').textContent = money(r.income.subtotal);
+      $('grandTotal').textContent = money(r.income.grandTotal);
+
+      // KPIs
+      const pay = r.payments || {};
+      $('k_total').textContent = money(pay.Total ?? r.totalsAll?.total ?? 0);
+      $('k_cash').textContent = money(pay.Cash ?? r.totalsAll?.cash ?? 0);
+      $('k_amex').textContent = money(pay.Amex ?? r.totalsAll?.amex ?? 0);
+      $('k_discover').textContent = money(pay.Discover ?? 0);
+      $('k_visa').textContent = money(pay.Visa ?? r.totalsAll?.visa ?? 0);
+      $('k_master').textContent = money(pay.Master ?? r.totalsAll?.master ?? 0);
+      $('k_other').textContent = money(pay.Other ?? 0);
+
+      // Sidebar totals
+      $('cashTotal').textContent = $('k_cash').textContent;
+      $('visaTotal').textContent = $('k_visa').textContent;
+      $('masterTotal').textContent = $('k_master').textContent;
+      $('amexTotal').textContent = $('k_amex').textContent;
+
+      // Departments table
+      const tbody = $('deptRows'); tbody.innerHTML = '';
+      r.dept.forEach(d => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td class="py-2 pr-4">${d.name}</td>
+                        <td class="py-2 pr-4">${d.numberSold}</td>
+                        <td class="py-2 pr-4">${money(d.dollarSold)}</td>
+                        <td class="py-2 pr-4">${money(d.cgs)}</td>
+                        <td class="py-2 pr-4">${money(d.profit)}</td>`;
+        tbody.appendChild(tr);
+      });
+      const tfoot = $('deptTotals');
+      const items = r.deptTotals?.items ?? r.dept.reduce((a,d)=>a+d.numberSold,0);
+      const sold = r.deptTotals?.sold ?? r.dept.reduce((a,d)=>a+d.dollarSold,0);
+      const cgs = r.deptTotals?.cgs ?? r.dept.reduce((a,d)=>a+d.cgs,0);
+      const prof = r.deptTotals?.profit ?? r.dept.reduce((a,d)=>a+d.profit,0);
+      tfoot.innerHTML = `<tr><td class="py-2 pr-4">Report Totals</td><td class="py-2 pr-4">${items}</td><td class="py-2 pr-4">${money(sold)}</td><td class="py-2 pr-4">${money(cgs)}</td><td class="py-2 pr-4">${money(prof)}</td></tr>`;
+
+      // Department chart
+      $('deptCount').textContent = `${r.dept.length} departments`;
+      const ctx = $('deptChart').getContext('2d');
+      const labels = r.dept.map(d => d.name);
+      const values = r.dept.map(d => d.dollarSold);
+      new Chart(ctx, { type: 'bar', data: { labels, datasets: [{ label: 'Sales ($)', data: values }] }, options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } } });
+    }
+
+    // ----------- Self‑tests
+    function assertEqual(actual, expected, msg) {
+      const li = document.createElement('li');
+      const ok = Object.is(actual, expected);
+      li.textContent = (ok ? '✅ ' : '❌ ') + msg + ' → got: ' + JSON.stringify(actual) + ', expected: ' + JSON.stringify(expected);
+      if (!ok) li.classList.add('text-red-600');
+      $('testLog').appendChild(li);
+    }
+
+    $('runTests').addEventListener('click', () => {
+      $('testLog').innerHTML = '';
+      assertEqual(money(1234.5).startsWith('$'), true, 'money() returns currency');
+      assertEqual(num('1,234.56'), 1234.56, 'num() parses commas and decimals');
+      const sample = `Store:\nDemo Store\nFor all transactions 27-Jun-2025 4:00 am through 28-Jun-2025 4:00 am\nMerchandise Department Summary\nLINGERIE\n13\n306.87\n100.03\n206.84\nReport Totals: 13 306.87 100.03 206.84\nTotal All Drawers\nCash:\n111.20\nVisa:\n636.60\nMaster\n204.49\nAmEx:\n48.74\nTotal:\n1760.01`;
+      const r = parseReport(sample);
+      assertEqual(r.store, 'Demo Store', 'store');
+      assertEqual(r.dept.length, 1, 'dept rows');
+      assertEqual(r.payments.Cash, 111.20, 'cash extracted');
+      assertEqual(r.payments.Amex, 48.74, 'amex extracted');
+      assertEqual(r.payments.Visa, 636.60, 'visa extracted');
+      assertEqual(r.income.grandTotal, 1760.01, 'grand total from payments');
+    });
+  </script>
+</body>
+</html>
