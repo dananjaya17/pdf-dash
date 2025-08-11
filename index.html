@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>POS PDF → Live Dashboard (v2 parser)</title>
-  <meta name="description" content="Upload a Crystal Reports‑style POS PDF and see a live dashboard parsed on the same page." />
+  <meta name="description" content="Upload a Crystal Reports-style POS PDF and see a live dashboard parsed on the same page." />
 
   <!-- Tailwind for layout -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -18,9 +18,7 @@
   <!-- Chart.js for quick charts -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-  <style>
-    html { scroll-behavior: smooth; }
-  </style>
+  <style> html { scroll-behavior: smooth; } </style>
 </head>
 <body class="bg-white text-slate-800 antialiased">
   <header class="sticky top-0 z-50 bg-white/80 backdrop-blur border-b border-slate-200">
@@ -37,7 +35,7 @@
     <!-- Upload Card -->
     <section class="rounded-2xl border border-slate-200 p-6">
       <h2 class="text-xl font-semibold">Upload your daily PDF</h2>
-      <p class="text-slate-600 mt-1">Works with Crystal Reports‑style end‑of‑day PDFs like the sample you shared.</p>
+      <p class="text-slate-600 mt-1">Works with Crystal Reports-style end-of-day PDFs like the sample you shared.</p>
       <div class="mt-4 flex flex-col sm:flex-row items-start gap-4">
         <input id="fileInput" type="file" accept="application/pdf" class="block w-full sm:w-auto file:mr-4 file:rounded-xl file:border-0 file:bg-brand-600 file:px-4 file:py-2 file:text-white hover:file:bg-brand-700 file:cursor-pointer" />
         <button id="parseBtn" class="px-4 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50" disabled>Parse & Build Dashboard</button>
@@ -55,7 +53,7 @@
       <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Grand Total</p><p id="grandTotal" class="text-xl font-bold">—</p></div>
     </section>
 
-    <!-- KPI Row requested (Total Sales, Cash, Amex, Discover, Visa, Master, Other) -->
+    <!-- KPI Row (Total Sales, Cash, Amex, Discover, Visa, Master, Other) -->
     <section id="kpis" class="mt-6 grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 hidden">
       <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">Total Sales</p><p id="k_total" class="text-xl font-bold">—</p></div>
       <div class="p-5 rounded-2xl border border-slate-200"><p class="text-slate-500 text-sm">CASH</p><p id="k_cash" class="text-xl font-bold">—</p></div>
@@ -116,10 +114,49 @@
       </div>
     </section>
 
-    <!-- Dev / Self‑tests -->
+    <!-- NEW: Employee & Drawer summaries -->
+    <section id="employees" class="mt-10 p-5 rounded-2xl border border-slate-200 overflow-x-auto hidden">
+      <h3 class="font-semibold mb-3">Employee Summary</h3>
+      <table class="min-w-full text-sm">
+        <thead class="text-left text-slate-500">
+          <tr>
+            <th class="py-2 pr-4">Drawer Id</th>
+            <th class="py-2 pr-4">Employee</th>
+            <th class="py-2 pr-4">Total</th>
+            <th class="py-2 pr-4">Cash</th>
+            <th class="py-2 pr-4">Visa</th>
+            <th class="py-2 pr-4">Master</th>
+            <th class="py-2 pr-4">AmEx</th>
+            <th class="py-2 pr-4">Short</th>
+          </tr>
+        </thead>
+        <tbody id="empRows"></tbody>
+      </table>
+    </section>
+
+    <section id="drawers" class="mt-6 p-5 rounded-2xl border border-slate-200 overflow-x-auto hidden">
+      <h3 class="font-semibold mb-3">Drawer Summary</h3>
+      <table class="min-w-full text-sm">
+        <thead class="text-left text-slate-500">
+          <tr>
+            <th class="py-2 pr-4">Drawer</th>
+            <th class="py-2 pr-4">Opened</th>
+            <th class="py-2 pr-4">Closed</th>
+            <th class="py-2 pr-4">Cash</th>
+            <th class="py-2 pr-4">Visa</th>
+            <th class="py-2 pr-4">Master</th>
+            <th class="py-2 pr-4">AmEx</th>
+            <th class="py-2 pr-4">Total</th>
+          </tr>
+        </thead>
+        <tbody id="drawerRows"></tbody>
+      </table>
+    </section>
+
+    <!-- Dev / Self-tests -->
     <section id="tests" class="mt-12 rounded-2xl border border-slate-200 p-6">
       <div class="flex items-center justify-between">
-        <h2 class="text-xl font-semibold">Self‑tests</h2>
+        <h2 class="text-xl font-semibold">Self-tests</h2>
         <button id="runTests" class="px-4 py-2 rounded-xl border border-slate-300 hover:bg-slate-50">Run tests</button>
       </div>
       <ul id="testLog" class="mt-4 list-disc pl-5 text-sm text-slate-700"></ul>
@@ -207,7 +244,7 @@
         const items = content?.items || [];
         const pageText = items.map(it => it?.str || '').join('\n');
         fullText += `\n\n[[[PAGE ${p}]]]\n` + pageText;
-        await new Promise(r => setTimeout(r, 0));
+        await new Promise(r => setTimeout(r, 0)); // let UI paint
       }
       return fullText;
     }
@@ -215,43 +252,44 @@
     function money(n) { if (n===null||n===undefined||Number.isNaN(n)) return '—'; return n.toLocaleString(undefined,{style:'currency',currency:'USD'}); }
     function num(x) { const v = Number(String(x).replace(/[^0-9.\-]/g,'')); return Number.isFinite(v)?v:0; }
 
-    // -------- Parser (multi‑line friendly)
+    // -------- Parser (multi-line friendly)
     function parseReport(text) {
       const rawLines = text.split(/\n+/).map(s => s.trim());
       const lines = rawLines.filter(Boolean);
       const joined = lines.join('\n');
 
-      // Store
+      // Store (value might be on the next line)
       let store = 'Unknown';
       for (let i = 0; i < lines.length; i++) {
         if (/^Store:?$/i.test(lines[i]) && lines[i+1]) { store = lines[i+1]; break; }
         const m = lines[i].match(/^Store:\s*(.+)$/i); if (m) { store = m[1].trim(); break; }
       }
-      // Window
+
+      // Report window (single line with 'through')
       const winMatch = joined.match(/For all transactions\s+([^\n]+?)\s+through\s+([^\n]+)/i);
       const windowStr = winMatch ? `${winMatch[1].replace(/\s+/g,' ')} → ${winMatch[2].replace(/\s+/g,' ')}` : '—';
 
-      // Payments
+      // Payments/KPIs (label then value on a following line)
       const payKeys = ['Cash','AmEx','Discover','Visa','Master','Other','Check','Total'];
       const payments = Object.fromEntries(payKeys.map(k => [k, null]));
       for (let i = 0; i < lines.length; i++) {
         const label = lines[i].replace(/:$/, '');
         if (payKeys.includes(label)) {
-          for (let j = 0; j < 3 && (i+j+1) < lines.length; j++) {
-            const v = lines[i+j+1];
+          for (let j = 1; j <= 4 && (i+j) < lines.length; j++) {
+            const v = lines[i+j];
             if (/^-?[0-9,.]+$/.test(v)) { payments[label] = num(v); break; }
           }
         }
       }
 
-      // Departments
+      // Merchandise department summary
       const dept = [];
       const startIdx = lines.findIndex(l => /Merchandise (Department )?Summary/i.test(l));
       if (startIdx !== -1) {
         let i = startIdx + 1;
         while (i < lines.length) {
           const l = lines[i];
-          if (/^Report Totals:/i.test(l) || /Employee Summary/i.test(l) || /Cash Drawer ID/i.test(l)) break;
+          if (/^Report Totals:/i.test(l) || /Employee Summary/i.test(l) || /Cash Drawer ID/i.test(l) || /Hourly Sales/i.test(l)) break;
           if (/^[A-Z0-9' &.-]+$/.test(l) && !/^\d/.test(l)) {
             const name = l;
             const n1 = lines[i+1], n2 = lines[i+2], n3 = lines[i+3], n4 = lines[i+4];
@@ -267,16 +305,16 @@
       const rt = joined.match(/Report Totals:\s*(\d+)\s+([0-9,.-]+)\s+([0-9,.-]+)\s+([0-9,.-]+)/i);
       if (rt) deptTotals = { items: num(rt[1]), sold: num(rt[2]), cgs: num(rt[3]), profit: num(rt[4]) };
 
-      // Aggregate drawers (optional)
+      // Totals All Drawers (aggregate)
       let totalsAll = null;
       const tAllBlockIdx = lines.findIndex(l => /Total All Drawers/i.test(l));
       if (tAllBlockIdx !== -1) {
-        const slice = lines.slice(tAllBlockIdx, tAllBlockIdx + 40);
+        const slice = lines.slice(tAllBlockIdx, tAllBlockIdx + 80);
         const tmap = { cash: null, amex: null, discover: null, visa: null, master: null, other: null, total: null };
         for (let k = 0; k < slice.length; k++) {
           const token = slice[k].replace(/:$/, '').toLowerCase();
           if (token in tmap) {
-            for (let j = 1; j <= 3 && (k+j) < slice.length; j++) {
+            for (let j = 1; j <= 4 && (k+j) < slice.length; j++) {
               if (/^-?[0-9,.]+$/.test(slice[k+j])) { tmap[token] = num(slice[k+j]); break; }
             }
           }
@@ -284,8 +322,60 @@
         totalsAll = { cash: tmap.cash||0, amex: tmap.amex||0, visa: tmap.visa||0, master: tmap.master||0, total: tmap.total||0 };
       }
 
+      // Employee Summary (by employee; values on subsequent lines)
+      const employees = [];
+      const empIdx = lines.findIndex(l => /Employee Summary/i.test(l));
+      if (empIdx !== -1) {
+        const stopIdx = [
+          lines.findIndex((l,idx)=> idx>empIdx && /Merchandise (Department )?Summary|Hourly Sales|Total All Drawers|Cash Drawer ID/i.test(l)),
+        ].filter(x=>x!==-1).sort((a,b)=>a-b)[0] || lines.length;
+        const seg = lines.slice(empIdx+1, stopIdx);
+        for (let i = 0; i < seg.length; i++) {
+          let drawerId = null; let name = null;
+          if (/^#?\d+$/.test(seg[i])) { drawerId = seg[i].replace('#',''); i++; }
+          if (i < seg.length && !/^-?[0-9,.]+$/.test(seg[i]) && !/^(Total|Cash|Visa|Master|AmEx|Short)$/i.test(seg[i])) { name = seg[i]; i++; }
+          const nums = [];
+          while (i < seg.length && nums.length < 6 && /^-?[0-9,.]+$/.test(seg[i])) { nums.push(num(seg[i])); i++; }
+          if (nums.length >= 2) {
+            const [total,cash,visa,master,amex,short_] = nums.concat(Array(6-nums.length).fill(0));
+            employees.push({ drawerId, name, total, cash, visa, master, amex, short: short_ });
+            i--; // keep place
+          }
+        }
+      }
+
+      // Drawer Summary (by drawer)
+      const drawer = [];
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(/Cash Drawer ID\s*(\d+)/i);
+        if (m) {
+          const id = m[1];
+          // next block until next drawer or totals
+          const end = (()=>{ for (let k=i+1;k<Math.min(i+80,lines.length);k++){ if (/Cash Drawer ID\s*\d+/i.test(lines[k]) || /Total All Drawers/i.test(lines[k])) return k; } return Math.min(i+80,lines.length); })();
+          const seg = lines.slice(i+1,end);
+          const pick = (label)=>{
+            const idx = seg.findIndex(s=> new RegExp('^'+label+':?$', 'i').test(s));
+            if (idx!==-1){
+              for (let j=1;j<=3 && (idx+j)<seg.length;j++){
+                if (/^-?[0-9,.]+$/.test(seg[idx+j])) return num(seg[idx+j]);
+                if (/[0-9]{2}:[0-9]{2}|[0-9]{1,2}[-/][A-Za-z0-9]{2,}/.test(seg[idx+j])) return seg[idx+j]; // simple date/time grab
+              }
+            }
+            return null;
+          };
+          const opened = pick('Opened');
+          const closed = pick('Closed');
+          const cash = pick('Cash') ?? 0;
+          const visa = pick('Visa') ?? 0;
+          const master = pick('Master') ?? 0;
+          const amex = pick('AmEx') ?? 0;
+          const total = pick('Total') ?? (cash+visa+master+amex);
+          drawer.push({ id, opened, closed, cash, visa, master, amex, total });
+        }
+      }
+
       const income = { subtotal: null, grandTotal: payments.Total ?? totalsAll?.total ?? null, taxA: null, taxB: null, taxC: null, taxTotal: null };
-      return { store, windowStr, income, payments, dept, deptTotals, drawer: [], totalsAll };
+      return { store, windowStr, income, payments, dept, deptTotals, drawer, totalsAll, employees };
     }
 
     function render(r) {
@@ -293,6 +383,9 @@
       $('kpis').classList.remove('hidden');
       $('viz').classList.remove('hidden');
       $('tables').classList.remove('hidden');
+      if ((r.employees||[]).length) $('employees').classList.remove('hidden');
+      if ((r.drawer||[]).length) $('drawers').classList.remove('hidden');
+
       $('store').textContent = r.store;
       $('window').textContent = r.windowStr;
       $('incomeSubtotal').textContent = money(r.income.subtotal);
@@ -338,9 +431,39 @@
       const labels = r.dept.map(d => d.name);
       const values = r.dept.map(d => d.dollarSold);
       new Chart(ctx, { type: 'bar', data: { labels, datasets: [{ label: 'Sales ($)', data: values }] }, options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } } });
+
+      // Employee table
+      const ebody = $('empRows'); ebody.innerHTML = '';
+      (r.employees || []).forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td class="py-2 pr-4">${row.drawerId ?? ''}</td>
+                        <td class="py-2 pr-4">${row.name ?? ''}</td>
+                        <td class="py-2 pr-4">${money(row.total)}</td>
+                        <td class="py-2 pr-4">${money(row.cash)}</td>
+                        <td class="py-2 pr-4">${money(row.visa)}</td>
+                        <td class="py-2 pr-4">${money(row.master)}</td>
+                        <td class="py-2 pr-4">${money(row.amex)}</td>
+                        <td class="py-2 pr-4">${money(row.short)}</td>`;
+        ebody.appendChild(tr);
+      });
+
+      // Drawer table
+      const dbody = $('drawerRows'); dbody.innerHTML = '';
+      (r.drawer || []).forEach(d => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td class="py-2 pr-4">#${d.id}</td>
+                        <td class="py-2 pr-4 whitespace-nowrap">${d.opened ?? ''}</td>
+                        <td class="py-2 pr-4 whitespace-nowrap">${d.closed ?? ''}</td>
+                        <td class="py-2 pr-4">${money(d.cash)}</td>
+                        <td class="py-2 pr-4">${money(d.visa)}</td>
+                        <td class="py-2 pr-4">${money(d.master)}</td>
+                        <td class="py-2 pr-4">${money(d.amex)}</td>
+                        <td class="py-2 pr-4">${money(d.total)}</td>`;
+        dbody.appendChild(tr);
+      });
     }
 
-    // ----------- Self‑tests
+    // ----------- Self-tests
     function assertEqual(actual, expected, msg) {
       const li = document.createElement('li');
       const ok = Object.is(actual, expected);
@@ -353,10 +476,56 @@
       $('testLog').innerHTML = '';
       assertEqual(money(1234.5).startsWith('$'), true, 'money() returns currency');
       assertEqual(num('1,234.56'), 1234.56, 'num() parses commas and decimals');
-      const sample = `Store:\nDemo Store\nFor all transactions 27-Jun-2025 4:00 am through 28-Jun-2025 4:00 am\nMerchandise Department Summary\nLINGERIE\n13\n306.87\n100.03\n206.84\nReport Totals: 13 306.87 100.03 206.84\nTotal All Drawers\nCash:\n111.20\nVisa:\n636.60\nMaster\n204.49\nAmEx:\n48.74\nTotal:\n1760.01`;
+      const sample = `Store:
+Demo Store
+For all transactions 27-Jun-2025 4:00 am through 28-Jun-2025 4:00 am
+Merchandise Department Summary
+LINGERIE
+13
+306.87
+100.03
+206.84
+Report Totals: 13 306.87 100.03 206.84
+Employee Summary
+#1
+Alice
+160.00
+100.00
+20.00
+30.00
+10.00
+0.00
+Cash Drawer ID 1 Summary
+Opened:
+06-27-2025 08:00
+Closed:
+06-27-2025 17:00
+Cash:
+100.00
+Visa:
+20.00
+Master:
+30.00
+AmEx:
+10.00
+Total:
+160.00
+Total All Drawers
+Cash:
+111.20
+Visa:
+636.60
+Master
+204.49
+AmEx:
+48.74
+Total:
+1760.01`;
       const r = parseReport(sample);
       assertEqual(r.store, 'Demo Store', 'store');
       assertEqual(r.dept.length, 1, 'dept rows');
+      assertEqual((r.employees||[]).length > 0, true, 'employee rows parsed');
+      assertEqual((r.drawer||[]).length > 0, true, 'drawer rows parsed');
       assertEqual(r.payments.Cash, 111.20, 'cash extracted');
       assertEqual(r.payments.Amex, 48.74, 'amex extracted');
       assertEqual(r.payments.Visa, 636.60, 'visa extracted');
